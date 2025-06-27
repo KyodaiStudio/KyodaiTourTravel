@@ -1,14 +1,21 @@
 import { neon } from "@neondatabase/serverless"
 
-const databaseUrl =
-  process.env.DATABASE_URL ||
-  "postgresql://neondb_owner:npg_XaA3EGNnB0Zg@ep-billowing-dawn-a12w5vk6-pooler.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
+// Fallback URL untuk development jika DATABASE_URL tidak ada
+const DATABASE_URL = process.env.DATABASE_URL || "postgresql://user:password@localhost:5432/tourtravel"
 
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL environment variable is not set. Please check your .env.local file.")
+export const sql = neon(DATABASE_URL)
+
+// Test koneksi database
+export async function testConnection() {
+  try {
+    const result = await sql`SELECT 1 as test`
+    console.log("Database connection successful:", result)
+    return true
+  } catch (error) {
+    console.error("Database connection failed:", error)
+    return false
+  }
 }
-
-export const sql = neon(databaseUrl)
 
 let migrated = false
 
