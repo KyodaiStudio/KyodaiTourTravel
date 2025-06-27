@@ -9,10 +9,12 @@ export async function middleware(request: NextRequest) {
   if (pathname.startsWith("/admin") && pathname !== "/admin/login") {
     try {
       const session = await getAdminSession()
+
       if (!session) {
         return NextResponse.redirect(new URL("/admin/login", request.url))
       }
     } catch (error) {
+      console.error("Middleware error:", error)
       return NextResponse.redirect(new URL("/admin/login", request.url))
     }
   }
@@ -21,5 +23,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  matcher: ["/admin/:path*", "/dashboard/:path*"],
 }
