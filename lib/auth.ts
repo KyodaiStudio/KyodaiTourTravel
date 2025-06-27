@@ -1,38 +1,76 @@
 import { cookies } from "next/headers"
-import { sql } from "./db"
+import { SignJWT, jwtVerify } from "jose"
 import bcrypt from "bcryptjs"
+
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || "your-secret-key-change-this-in-production")
 
 export interface ClientSession {
   id: number
-  name: string
   email: string
+  name: string
+  phone?: string
 }
 
 export interface AdminSession {
   id: number
-  name: string
+  username: string
   email: string
   role: string
 }
 
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 12)
+}
+
+export async function verifyPassword(password: string, hashedPassword: string): Promise<boolean> {
+  return bcrypt.compare(password, hashedPassword)
+}
+
+export async function createClientToken(payload: ClientSession): Promise<string> {
+  return new SignJWT({ ...payload, type: "client" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(JWT_SECRET)
+}
+
+export async function createAdminToken(payload: AdminSession): Promise<string> {
+  return new SignJWT({ ...payload, type: "admin" })
+    .setProtectedHeader({ alg: "HS256" })
+    .setIssuedAt()
+    .setExpirationTime("7d")
+    .sign(JWT_SECRET)
+}
+
+export async function verifyToken(token: string): Promise<any> {
+  try {
+    const { payload } = await jwtVerify(token, JWT_SECRET)
+    return payload
+  } catch (error) {
+    return null
+  }
+}
+
 export async function getClientSession(): Promise<ClientSession | null> {
   try {
-    const cookieStore = await cookies()
-    const sessionToken = cookieStore.get("client_session")?.value
+    const cookieStore = cookies()
+    const token = cookieStore.get("client-token")?.value
 
-    if (!sessionToken) {
+    if (!token) {
       return null
     }
 
-    const result = await sql`
-      SELECT c.id, c.name, c.email
-      FROM client_sessions cs
-      JOIN clients c ON cs.client_id = c.id
-      WHERE cs.session_token = ${sessionToken}
-      AND cs.expires_at > NOW()
-    `
+    const payload = await verifyToken(token)
+    if (!payload || payload.type !== "client") {
+      return null
+    }
 
-    return result.length > 0 ? (result[0] as ClientSession) : null
+    return {
+      id: payload.id as number,
+      email: payload.email as string,
+      name: payload.name as string,
+      phone: payload.phone as string,
+    }
   } catch (error) {
     console.error("Error getting client session:", error)
     return null
@@ -41,74 +79,62 @@ export async function getClientSession(): Promise<ClientSession | null> {
 
 export async function getAdminSession(): Promise<AdminSession | null> {
   try {
-    const cookieStore = await cookies()
-    const sessionToken = cookieStore.get("admin_session")?.value
+    const cookieStore = cookies()
+    const token = cookieStore.get("admin-token")?.value
 
-    if (!sessionToken) {
+    if (!token) {
       return null
     }
 
-    const result = await sql`
-      SELECT a.id, a.name, a.email, a.role
-      FROM admin_sessions ads
-      JOIN admin_users a ON ads.admin_id = a.id
-      WHERE ads.session_token = ${sessionToken}
-      AND ads.expires_at > NOW()
-    `
+    const payload = await verifyToken(token)
+    if (!payload || payload.type !== "admin") {
+      return null
+    }
 
-    return result.length > 0 ? (result[0] as AdminSession) : null
+    return {
+      id: payload.id as number,
+      username: payload.username as string,
+      email: payload.email as string,
+      role: payload.role as string,
+    }
   } catch (error) {
     console.error("Error getting admin session:", error)
     return null
   }
 }
 
-export async function createClientSession(clientId: number): Promise<string> {
-  const sessionToken = generateSessionToken()
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+export async function setClientSession(session: ClientSession): Promise<void> {
+  const token = await createClientToken(session)
+  const cookieStore = cookies()
 
-  await sql`
-    INSERT INTO client_sessions (client_id, session_token, expires_at)
-    VALUES (${clientId}, ${sessionToken}, ${expiresAt})
-  `
-
-  return sessionToken
+  cookieStore.set("client-token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: "/",
+  })
 }
 
-export async function createAdminSession(adminId: number): Promise<string> {
-  const sessionToken = generateSessionToken()
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+export async function setAdminSession(session: AdminSession): Promise<void> {
+  const token = await createAdminToken(session)
+  const cookieStore = cookies()
 
-  await sql`
-    INSERT INTO admin_sessions (admin_id, session_token, expires_at)
-    VALUES (${adminId}, ${sessionToken}, ${expiresAt})
-  `
-
-  return sessionToken
+  cookieStore.set("admin-token", token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 7, // 7 days
+    path: "/",
+  })
 }
 
-export async function deleteClientSession(sessionToken: string): Promise<void> {
-  await sql`
-    DELETE FROM client_sessions
-    WHERE session_token = ${sessionToken}
-  `
+export async function clearClientSession(): Promise<void> {
+  const cookieStore = cookies()
+  cookieStore.delete("client-token")
 }
 
-export async function deleteAdminSession(sessionToken: string): Promise<void> {
-  await sql`
-    DELETE FROM admin_sessions
-    WHERE session_token = ${sessionToken}
-  `
-}
-
-export async function verifyPassword(password: string, hashedPassword: string): Promise<boolean> {
-  return bcrypt.compare(password, hashedPassword)
-}
-
-export async function hashPassword(password: string): Promise<string> {
-  return bcrypt.hash(password, 10)
-}
-
-function generateSessionToken(): string {
-  return Math.random().toString(36).substring(2) + Date.now().toString(36)
+export async function clearAdminSession(): Promise<void> {
+  const cookieStore = cookies()
+  cookieStore.delete("admin-token")
 }
